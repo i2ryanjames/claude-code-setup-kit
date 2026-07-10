@@ -1,0 +1,31 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/session-start-hotcache.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/glm-review.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/wiki-doc-nudge.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

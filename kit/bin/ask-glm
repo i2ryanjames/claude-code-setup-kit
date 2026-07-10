@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# ask-glm — direct (non-agentic) prompt to GLM via Ollama cloud.
+# Raw generation only: prompt in, text out. No file/tool access.
+# For autonomous file-editing use `glm-do` instead.
+# Usage:
+#   ask-glm "your prompt here"
+#   echo "your prompt" | ask-glm
+#   ask-glm -m kimi-k2:cloud "harder prompt"   # swap model
+
+set -euo pipefail
+
+MODEL="glm-5.2:cloud"
+OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -m|--model)
+      case "$2" in
+        glm|glm5|glm-5.2) MODEL="glm-5.2:cloud" ;;
+        kimi|kimi2|kimi-2.7) MODEL="kimi-k2.7-code:cloud" ;;
+        *)                MODEL="$2" ;;
+      esac
+      shift 2
+      ;;
+    -h|--help)
+      cat <<EOF
+ask-glm — query GLM (or another Ollama model) for raw text generation.
+
+Usage:
+  ask-glm "prompt text"
+  echo "prompt text" | ask-glm
+  ask-glm -m kimi "prompt"    # use kimi-k2:cloud instead of glm-5.2:cloud
+
+Env:
+  OLLAMA_URL   override Ollama endpoint (default: http://localhost:11434)
+
+Note: this is RAW generation (no file access). For autonomous coding that
+edits files, use 'glm-do' (our in-house harness driving GLM).
+EOF
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ $# -gt 0 ]]; then
+  PROMPT="$*"
+else
+  PROMPT="$(cat)"
+fi
+
+if [[ -z "${PROMPT// }" ]]; then
+  echo "ask-glm: empty prompt" >&2
+  exit 1
+fi
+
+if ! curl -sf "${OLLAMA_URL}/api/version" >/dev/null 2>&1; then
+  echo "ask-glm: Ollama not reachable at ${OLLAMA_URL}. Run 'ollama serve' or check the daemon." >&2
+  exit 2
+fi
+
+PAYLOAD=$(jq -n --arg model "$MODEL" --arg prompt "$PROMPT" \
+  '{model:$model, prompt:$prompt, stream:false}')
+
+RESPONSE=$(curl -sf -X POST "${OLLAMA_URL}/api/generate" \
+  -H 'Content-Type: application/json' \
+  -d "$PAYLOAD")
+
+if [[ -z "$RESPONSE" ]]; then
+  echo "ask-glm: empty response from Ollama (model=$MODEL)" >&2
+  exit 3
+fi
+
+echo "$RESPONSE" | jq -r '.response // .error // "ask-glm: malformed response"'

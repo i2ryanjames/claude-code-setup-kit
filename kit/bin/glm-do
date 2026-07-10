@@ -1,0 +1,533 @@
+#!/usr/bin/env python3
+"""
+glm-do — minimal, transparent autonomous-coding harness.
+
+GLM (via a local Ollama daemon) generates COMPLETE file contents inside a
+strict sentinel-delimited output contract. This script parses that output,
+applies it to disk mechanically (no shell access is ever given to the
+model), and optionally runs a verify command in a repair loop.
+
+Usage:
+  glm-do -C <repo> --prompt-file <path>
+  glm-do -C <repo> "inline task"
+  echo task | glm-do -C <repo>
+
+Options:
+  --context <path>      repeatable; file or glob, relative to repo
+  --verify "<cmd>"      shell command run in repo (bash -c) to validate
+  --model glm|kimi|<raw ollama model name>   (default: glm)
+  --max-iters N         total generation rounds (default: 3)
+  --ollama-url URL      default env OLLAMA_URL or http://localhost:11434
+
+Env:
+  GLM_DO_FORBIDDEN_PATHS  colon-separated list of repos glm-do must never
+                          write to (private/regulated data) — exits 6 on hit
+
+Exit codes:
+  0 ok
+  1 usage / empty task
+  2 ollama unreachable
+  3 model/HTTP error or empty response
+  4 no edits parsed
+  5 verify failing after all rounds
+  6 safety refusal
+"""
+
+import argparse
+import glob
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+MODEL_ALIASES = {
+    "glm": "glm-5.2:cloud",
+    "glm5": "glm-5.2:cloud",
+    "glm-5.2": "glm-5.2:cloud",
+    "kimi": "kimi-k2.7-code:cloud",
+    "kimi2": "kimi-k2.7-code:cloud",
+    "kimi-2.7": "kimi-k2.7-code:cloud",
+}
+
+CONTEXT_CAP_BYTES = 120 * 1024
+REPAIR_CAP_BYTES = 120 * 1024
+VERIFY_OUTPUT_TAIL = 4 * 1024
+# Repos glm-do must NEVER write to (private/regulated data, no-remote repos).
+# Colon-separated list, set in your shell profile, e.g.:
+#   export GLM_DO_FORBIDDEN_PATHS="$HOME/my-private-repo:$HOME/client-data"
+FORBIDDEN_PATHS = [
+    os.path.expanduser(p)
+    for p in os.environ.get("GLM_DO_FORBIDDEN_PATHS", "").split(":")
+    if p.strip()
+]
+MAX_FILES_PER_ROUND = 40
+
+FILE_SENTINEL = "===FILE: "
+DELETE_SENTINEL = "===DELETE: "
+END_SENTINEL = "===END==="
+NOTES_SENTINEL = "===NOTES==="
+
+OUTPUT_CONTRACT = """OUTPUT CONTRACT (follow exactly, no prose outside these sentinel blocks):
+- To create or replace a file, emit a line "===FILE: relative/path===" (no leading
+  whitespace, path relative to the repo root), then the COMPLETE file contents on
+  the following lines, terminated by a line "===END===" (also at column 0).
+- To delete a file, emit a single line "===DELETE: relative/path===" (column 0).
+- You may emit multiple FILE/DELETE blocks.
+- Finish with a "===NOTES===" line, then a short summary of what you did, then a
+  line "===END===".
+- All sentinel lines ("===FILE: ...===", "===DELETE: ...===", "===END===",
+  "===NOTES===") MUST start at column 0 (no indentation, no code fences around
+  them).
+- Return COMPLETE files, never diffs or fragments. Do not omit unchanged parts of
+  a file with comments like "...rest unchanged" — always print the full file.
+"""
+
+HEADER = (
+    "You are an expert software engineer. Make the requested change by "
+    "returning COMPLETE new contents for every file you create or modify. "
+    "Follow the OUTPUT CONTRACT exactly — no prose outside the sentinel blocks."
+)
+
+
+def eprint(*a, **kw):
+    print(*a, file=sys.stderr, **kw)
+
+
+def resolve_model(name):
+    return MODEL_ALIASES.get(name, name)
+
+
+def read_task(args):
+    if args.prompt_file:
+        try:
+            with open(args.prompt_file, "r") as f:
+                return f.read()
+        except OSError as e:
+            eprint(f"glm-do: cannot read --prompt-file {args.prompt_file}: {e}")
+            sys.exit(1)
+    if args.inline_task:
+        return " ".join(args.inline_task)
+    if not sys.stdin.isatty():
+        data = sys.stdin.read()
+        if data.strip():
+            return data
+    return ""
+
+
+def expand_context_paths(repo, patterns):
+    paths = []
+    for pat in patterns:
+        abspat = os.path.join(repo, pat)
+        matches = glob.glob(abspat, recursive=True)
+        if matches:
+            for m in matches:
+                if os.path.isfile(m):
+                    paths.append(m)
+        else:
+            if os.path.isfile(abspat):
+                paths.append(abspat)
+            else:
+                eprint(f"glm-do: context path not found, skipping: {pat}")
+    return paths
+
+
+def build_context_block(repo, context_files):
+    if not context_files:
+        return ""
+    parts = ["REPOSITORY CONTEXT:"]
+    total = 0
+    for abspath in context_files:
+        relpath = os.path.relpath(abspath, repo)
+        try:
+            with open(abspath, "r", errors="replace") as f:
+                content = f.read()
+        except OSError as e:
+            eprint(f"glm-do: cannot read context file {relpath}: {e}")
+            continue
+        entry_header = f"--- FILE: {relpath} ---\n"
+        remaining = CONTEXT_CAP_BYTES - total
+        if remaining <= 0:
+            parts.append(entry_header + "[truncated]\n")
+            total += len(entry_header)
+            continue
+        encoded = content.encode("utf-8", errors="replace")
+        if len(encoded) > remaining:
+            truncated = encoded[:remaining].decode("utf-8", errors="ignore")
+            content = truncated + "\n[truncated]"
+        parts.append(entry_header + content)
+        total += len(entry_header) + len(content.encode("utf-8", errors="replace"))
+        if total >= CONTEXT_CAP_BYTES:
+            continue
+    return "\n\n".join(parts)
+
+
+def build_generate_prompt(task, context_block):
+    pieces = [HEADER, "", "TASK:", task.strip()]
+    if context_block:
+        pieces += ["", context_block]
+    pieces += ["", OUTPUT_CONTRACT]
+    return "\n".join(pieces)
+
+
+def build_repair_prompt(task, applied_files, repo, verify_output):
+    pieces = [HEADER, "", "TASK:", task.strip(), "", "PREVIOUSLY APPLIED FILES:"]
+    total = 0
+    for relpath in applied_files:
+        abspath = os.path.join(repo, relpath)
+        header = f"--- FILE: {relpath} ---\n"
+        try:
+            with open(abspath, "r", errors="replace") as f:
+                content = f.read()
+        except OSError:
+            content = "[file missing on disk — was likely deleted]"
+        remaining = REPAIR_CAP_BYTES - total
+        if remaining <= 0:
+            pieces.append(header + "[truncated]")
+            total += len(header)
+            continue
+        encoded = content.encode("utf-8", errors="replace")
+        if len(encoded) > remaining:
+            content = encoded[:remaining].decode("utf-8", errors="ignore") + "\n[truncated]"
+        pieces.append(header + content)
+        total += len(header) + len(content.encode("utf-8", errors="replace"))
+    pieces += [
+        "",
+        "VERIFY COMMAND FAILED:",
+        verify_output,
+        "",
+        OUTPUT_CONTRACT,
+    ]
+    return "\n".join(pieces)
+
+
+GEN_TOKEN_CAP = 65536  # bounds a degenerate repetition loop; ample for real edits
+
+
+def call_ollama(ollama_url, model, prompt):
+    payload = json.dumps(
+        {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"num_predict": GEN_TOKEN_CAP},
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{ollama_url}/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError as e:
+        eprint(f"glm-do: ollama request failed: {e}")
+        sys.exit(3)
+    except TimeoutError:
+        eprint("glm-do: ollama request timed out after 600s")
+        sys.exit(3)
+    if not body.strip():
+        eprint("glm-do: empty response body from ollama")
+        sys.exit(3)
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        eprint("glm-do: malformed JSON response from ollama")
+        eprint(body[:2048])
+        sys.exit(3)
+    if "error" in data:
+        eprint(f"glm-do: ollama error: {data['error']}")
+        sys.exit(3)
+    # A "length" stop means the model hit the token cap mid-generation — the tail
+    # (often a FILE block missing its ===END===) is truncated and unsafe to apply.
+    if data.get("done_reason") == "length":
+        eprint("glm-do: model output was truncated (hit the length cap) — refusing to apply a partial generation")
+        sys.exit(3)
+    response_text = data.get("response", "")
+    if not response_text.strip():
+        eprint("glm-do: empty 'response' field from ollama")
+        sys.exit(3)
+    return response_text
+
+
+def parse_sentinel_output(text):
+    """Line-anchored parse of the sentinel contract.
+
+    Returns (files, deletes, notes) where files is a list of
+    (relpath, content) and deletes is a list of relpath strings.
+    """
+    lines = text.split("\n")
+    files = []
+    deletes = []
+    notes = None
+    truncated = False  # a FILE block missing its ===END=== => swallowed tail
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        if line.startswith(FILE_SENTINEL) and line.rstrip().endswith("==="):
+            relpath = line[len(FILE_SENTINEL):].rstrip()
+            if relpath.endswith("==="):
+                relpath = relpath[: -len("===")]
+            relpath = relpath.strip()
+            i += 1
+            body_lines = []
+            found_end = False
+            while i < n:
+                if lines[i].strip() == END_SENTINEL:
+                    found_end = True
+                    i += 1
+                    break
+                body_lines.append(lines[i])
+                i += 1
+            if not found_end:
+                # The inner loop consumed every remaining line — any later FILE/
+                # DELETE/NOTES blocks got swallowed into this file's body. Do not
+                # trust or write it; flag the whole parse as truncated.
+                eprint(f"glm-do: FILE block for {relpath} is missing its ===END=== (output truncated/malformed)")
+                truncated = True
+            content = "\n".join(body_lines)
+            if body_lines:
+                content += "\n"
+            files.append((relpath, content))
+            continue
+        if line.startswith(DELETE_SENTINEL) and line.rstrip().endswith("==="):
+            relpath = line[len(DELETE_SENTINEL):].rstrip()
+            if relpath.endswith("==="):
+                relpath = relpath[: -len("===")]
+            relpath = relpath.strip()
+            deletes.append(relpath)
+            i += 1
+            continue
+        if line.strip() == NOTES_SENTINEL:
+            i += 1
+            body_lines = []
+            while i < n:
+                if lines[i].strip() == END_SENTINEL:
+                    i += 1
+                    break
+                body_lines.append(lines[i])
+                i += 1
+            notes = "\n".join(body_lines).strip()
+            continue
+        i += 1
+    return files, deletes, notes, truncated
+
+
+def is_path_safe(repo_real, relpath):
+    if os.path.isabs(relpath):
+        return False, "absolute path"
+    normalized = relpath.replace("\\", "/")
+    parts = [p for p in normalized.split("/") if p]
+    # Case-INSENSITIVE .git check: on a case-insensitive FS (macOS/APFS) a model
+    # emitting `.GIT/hooks/post-checkout` would land in the real .git/hooks and
+    # plant an executable git hook (RCE on next checkout). A case-sensitive
+    # `".git" in parts` misses that; realpath doesn't fold case either.
+    if any(p.lower() == ".git" for p in parts):
+        return False, "touches .git"
+    target_real = os.path.realpath(os.path.join(repo_real, relpath))
+    prefix = repo_real + os.sep
+    if not (target_real == repo_real or target_real.startswith(prefix)):
+        return False, "escapes repo root"
+    return True, None
+
+
+def apply_round(repo, files, deletes):
+    repo_real = os.path.realpath(repo)
+
+    total_ops = len(files) + len(deletes)
+    if total_ops > MAX_FILES_PER_ROUND:
+        eprint(f"glm-do: refusing round — {total_ops} file ops exceeds cap of {MAX_FILES_PER_ROUND}")
+        sys.exit(6)
+
+    all_paths = [rp for rp, _ in files] + list(deletes)
+    for relpath in all_paths:
+        safe, reason = is_path_safe(repo_real, relpath)
+        if not safe:
+            eprint(f"glm-do: safety refusal — '{relpath}': {reason}")
+            sys.exit(6)
+
+    applied = []
+    try:
+        for relpath, content in files:
+            abspath = os.path.join(repo_real, relpath)
+            os.makedirs(os.path.dirname(abspath) or repo_real, exist_ok=True)
+            with open(abspath, "w") as f:
+                f.write(content)
+            applied.append(relpath)
+
+        for relpath in deletes:
+            abspath = os.path.join(repo_real, relpath)
+            if os.path.exists(abspath):
+                os.remove(abspath)
+            applied.append(relpath)
+    except OSError as e:
+        eprint(f"glm-do: write failed after {len(applied)} file op(s): {e}")
+        eprint("glm-do: repo may be partially modified — review `git status` before rerunning.")
+        sys.exit(3)
+
+    return applied
+
+
+def run_verify(repo, verify_cmd):
+    try:
+        proc = subprocess.run(
+            ["bash", "-c", verify_cmd],
+            cwd=repo,
+            timeout=300,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.TimeoutExpired as e:
+        combined = (e.stdout or "") + (e.stderr or "")
+        return False, (combined + "\n[verify command timed out after 300s]")
+    combined = (proc.stdout or "") + (proc.stderr or "")
+    return proc.returncode == 0, combined
+
+
+def is_git_repo(repo):
+    return os.path.isdir(os.path.join(repo, ".git"))
+
+
+def git_output(repo, args):
+    try:
+        proc = subprocess.run(
+            ["git"] + args, cwd=repo, capture_output=True, text=True, timeout=30
+        )
+        return proc.stdout
+    except Exception:
+        return ""
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="glm-do",
+        description="Minimal transparent autonomous-coding harness driving GLM via Ollama.",
+    )
+    parser.add_argument("-C", "--repo", required=True, help="repo path to operate in")
+    parser.add_argument("--prompt-file", help="path to file containing the task")
+    parser.add_argument("--context", action="append", default=[], help="context file or glob, relative to repo (repeatable)")
+    parser.add_argument("--verify", help="shell command run in repo to validate the change")
+    parser.add_argument("--model", default="glm", help="glm|kimi|<raw ollama model name> (default: glm)")
+    parser.add_argument("--max-iters", type=int, default=3, help="total generation rounds (default: 3)")
+    parser.add_argument("--ollama-url", default=os.environ.get("OLLAMA_URL", "http://localhost:11434"))
+    parser.add_argument("inline_task", nargs="*", help="inline task text")
+
+    # argparse exits 2 on a usage error, which collides with our documented
+    # "2 = ollama unreachable". Remap usage errors to exit 1 (usage/empty task)
+    # so callers branching on exit codes don't confuse a CLI typo for a dead daemon.
+    try:
+        args = parser.parse_args()
+    except SystemExit as e:
+        sys.exit(1 if e.code == 2 else (e.code or 0))
+
+    repo = os.path.abspath(args.repo)
+    repo_real = os.path.realpath(repo)
+
+    # Identity comparison (inode), not string equality: os.path.realpath does NOT
+    # canonicalize letter-case on case-insensitive filesystems (macOS/APFS), so a
+    # case-variant path would slip past a `==` check and hit the real protected
+    # repo. samefile compares the underlying inode, defeating case variants.
+    for forbidden in FORBIDDEN_PATHS:
+        try:
+            hit = os.path.exists(forbidden) and os.path.samefile(repo_real, forbidden)
+        except OSError:
+            hit = False
+        if hit:
+            eprint(f"glm-do: REFUSED — target repo is on GLM_DO_FORBIDDEN_PATHS ({forbidden}). Never automate writes there.")
+            sys.exit(6)
+
+    if not os.path.isdir(repo):
+        eprint(f"glm-do: repo path does not exist or is not a directory: {repo}")
+        sys.exit(1)
+
+    task = read_task(args)
+    if not task.strip():
+        eprint("glm-do: empty task (use --prompt-file, an inline arg, or pipe via stdin)")
+        sys.exit(1)
+
+    model = resolve_model(args.model)
+    ollama_url = args.ollama_url.rstrip("/")
+
+    try:
+        req = urllib.request.Request(f"{ollama_url}/api/version")
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+    except Exception as e:
+        eprint(f"glm-do: ollama unreachable at {ollama_url}: {e}")
+        sys.exit(2)
+
+    context_files = expand_context_paths(repo, args.context)
+    context_block = build_context_block(repo, context_files)
+
+    max_iters = max(1, args.max_iters)
+    verify_status = "none"
+    all_applied = []  # ordered, deduped list of relpaths touched across rounds
+    notes_text = None
+    rounds_used = 0
+
+    prompt = build_generate_prompt(task, context_block)
+
+    for round_num in range(1, max_iters + 1):
+        rounds_used = round_num
+        response_text = call_ollama(ollama_url, model, prompt)
+
+        files, deletes, notes, truncated = parse_sentinel_output(response_text)
+        if notes:
+            notes_text = notes
+
+        if truncated:
+            eprint("glm-do: parse aborted — a FILE block was truncated; nothing applied this round.")
+            sys.exit(3)
+
+        if not files and not deletes:
+            eprint("glm-do: model returned no FILE/DELETE edits. First 2KB of response:")
+            eprint(response_text[:2048])
+            sys.exit(4)
+
+        applied = apply_round(repo, files, deletes)
+        for relpath in applied:
+            if relpath not in all_applied:
+                all_applied.append(relpath)
+
+        if not args.verify:
+            verify_status = "none"
+            break
+
+        ok, verify_output = run_verify(repo, args.verify)
+        if ok:
+            verify_status = "pass"
+            break
+
+        verify_status = "fail"
+        if round_num >= max_iters:
+            break
+
+        tail = verify_output[-VERIFY_OUTPUT_TAIL:]
+        # Only repair files still present on disk (deletes drop out naturally).
+        existing_applied = [
+            rp for rp in all_applied if os.path.exists(os.path.join(repo, rp))
+        ]
+        prompt = build_repair_prompt(task, existing_applied, repo, tail)
+
+    print(f"GLM_DO model={model} rounds={rounds_used} verify={verify_status}")
+
+    if is_git_repo(repo):
+        print("--- git status --short ---")
+        print(git_output(repo, ["status", "--short"]), end="")
+        print("--- git diff --stat ---")
+        print(git_output(repo, ["diff", "--stat"]), end="")
+
+    if notes_text:
+        print(notes_text)
+
+    if verify_status == "fail":
+        sys.exit(5)
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

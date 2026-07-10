@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# ask-gemma — direct prompt to local Gemma via Ollama
+# Usage:
+#   ask-gemma "your prompt here"
+#   echo "your prompt" | ask-gemma
+#   ask-gemma -m 26b "harder prompt"   # uses gemma4:26b instead of e4b
+
+set -euo pipefail
+
+MODEL="gemma4:e4b"
+OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -m|--model)
+      case "$2" in
+        e4b|4b)  MODEL="gemma4:e4b" ;;
+        26b)     MODEL="gemma4:26b" ;;
+        *)       MODEL="$2" ;;
+      esac
+      shift 2
+      ;;
+    -h|--help)
+      cat <<EOF
+ask-gemma — query local Gemma via Ollama
+
+Usage:
+  ask-gemma "prompt text"
+  echo "prompt text" | ask-gemma
+  ask-gemma -m 26b "prompt"   # use gemma4:26b (slower, higher quality)
+  ask-gemma -m e4b "prompt"   # use gemma4:e4b (default, faster)
+
+Env:
+  OLLAMA_URL   override Ollama endpoint (default: http://localhost:11434)
+EOF
+      exit 0
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ $# -gt 0 ]]; then
+  PROMPT="$*"
+else
+  PROMPT="$(cat)"
+fi
+
+if [[ -z "${PROMPT// }" ]]; then
+  echo "ask-gemma: empty prompt" >&2
+  exit 1
+fi
+
+if ! curl -sf "${OLLAMA_URL}/api/version" >/dev/null 2>&1; then
+  echo "ask-gemma: Ollama not reachable at ${OLLAMA_URL}. Run 'ollama serve' or check the daemon." >&2
+  exit 2
+fi
+
+PAYLOAD=$(jq -n --arg model "$MODEL" --arg prompt "$PROMPT" \
+  '{model:$model, prompt:$prompt, stream:false}')
+
+RESPONSE=$(curl -sf -X POST "${OLLAMA_URL}/api/generate" \
+  -H 'Content-Type: application/json' \
+  -d "$PAYLOAD")
+
+if [[ -z "$RESPONSE" ]]; then
+  echo "ask-gemma: empty response from Ollama (model=$MODEL)" >&2
+  exit 3
+fi
+
+echo "$RESPONSE" | jq -r '.response // .error // "ask-gemma: malformed response"'
