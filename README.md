@@ -16,7 +16,8 @@ not just the CLI, but the whole operating pattern around it:
 ## Quick start
 
 ```bash
-git clone https://github.com/YOURNAME/claude-code-setup-kit
+# requires access — accept your repo invitation first, then:
+git clone https://github.com/i2ryanjames/claude-code-setup-kit
 cd claude-code-setup-kit
 bash setup.sh
 ```
@@ -99,4 +100,5 @@ Max · ~15 GB free disk if you want the local Gemma model. Full detail in
 
 ## License
 
-MIT
+Proprietary — personal-use license for authorized purchasers. See [LICENSE](LICENSE).
+Please don't redistribute; it's a small independent product.
