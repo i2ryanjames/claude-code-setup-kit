@@ -15,16 +15,31 @@ not just the CLI, but the whole operating pattern around it:
 
 ## Quick start
 
+**One-liner** (bare Mac / Linux / WSL — no git needed):
+
 ```bash
-# requires access — accept your repo invitation first, then:
+curl -fsSL https://raw.githubusercontent.com/i2ryanjames/claude-code-setup-kit/main/install.sh | bash
+```
+
+This downloads the kit and runs the installer automatically. Prefer to clone it
+yourself?
+
+```bash
 git clone https://github.com/i2ryanjames/claude-code-setup-kit
 cd claude-code-setup-kit
 bash setup.sh
 ```
 
-The installer is **interactive and layered** — it asks before each layer,
-never overwrites your existing config without a timestamped backup, and is
-safe to re-run any time.
+The installer is **fully automatic by default** — it detects your OS (macOS via
+Homebrew, Linux/WSL via apt + nvm, native Windows → stop with instructions),
+auto-installs any missing prerequisites (git, jq, node, gh, python3), wires
+`~/.local/bin` onto your PATH, installs Claude Code + MCP servers + the
+delegation harness + recommended plugins, and merges your hooks — with no
+per-layer prompts. Add the `--interactive` (`-i`) flag to restore the old
+step-by-step confirmations.
+
+The script backs up any file it changes (`*.bak-<timestamp>`), merges hook
+config additively, and is safe to re-run any time.
 
 Completely new to the terminal? Start with the docs instead:
 
