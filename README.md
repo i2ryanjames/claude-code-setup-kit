@@ -15,6 +15,10 @@ not just the CLI, but the whole operating pattern around it:
 
 ## Quick start
 
+**Don't want to use a terminal at all?** Send them a double-click installer from
+[`installers/`](installers/) — `install-mac.command` (Mac) or
+`install-windows.bat` (Windows). Same setup, no typing.
+
 **One-liner** (bare Mac / Linux / WSL — no git needed):
 
 ```bash
