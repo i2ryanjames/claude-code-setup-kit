@@ -12,6 +12,17 @@ Skills are reusable instruction packs that Claude invokes when you call them. In
 
 Plugins are bundles distributed through marketplaces and installed inside Claude Code with the `/plugin` command. A plugin may contain one or more skills, prompts, or supporting files. Think of a plugin as a small package you add to Claude Code so that it gains new slash commands or behaviors without you having to copy files around by hand.
 
+## Auto-installed plugins (via setup.sh)
+
+As of the latest version, `setup.sh` (Layer 5 of the installer) automatically
+installs a recommended set of plugins for you using the `claude plugin` CLI. This
+includes **ui-ux-pro-max**, **vercel**, **supabase**, **figma**, and the
+**anthropics/skills** marketplace by default — so you no longer need to install
+these by hand after running the installer.
+
+The walkthrough below is still useful as a **manual reference** if you want to
+add other plugins later or if the auto-installation doesn't complete.
+
 ## Recommended plugins and skills
 
 Below is a short, generic list you can pick from. You do not need all of them — choose based on the tools you actually use.

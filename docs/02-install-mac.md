@@ -8,6 +8,14 @@ In this page you will turn a plain Mac into a machine that can run Claude Code a
 
 On a Mac, open Spotlight by pressing **Command (⌘) + Space**, then type **Terminal** and press **Enter**. A window with a plain text prompt will appear. Every command in this guide is typed into that window and confirmed with **Enter**.
 
+## Automatic prerequisite bootstrap
+
+As of the latest version, the `setup.sh` installer can detect and auto-install
+Homebrew and the core tools for you, so the manual steps below are now a
+**fallback reference** if you prefer to install by hand or if the auto-bootstrap
+doesn't work. You can skip this entire page and run `bash setup.sh` (or the
+one-liner in the README) directly — it will handle this layer for you.
+
 ## Install Homebrew
 
 Homebrew is a package manager: it lets you install other developer tools by name, the same way an app store lets you install apps. On a Mac it is the standard way to install things like `git`, `node`, and `gh`. Run this single command, taken from the official Homebrew site at brew.sh, to install Homebrew:

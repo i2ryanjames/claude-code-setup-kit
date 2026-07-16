@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # setup.sh — layered installer for the claude-code-setup-kit.
 #
+# Fully automatic by default:
+#   - detects your OS and installs any missing prerequisites
+#   - runs every layer with sensible defaults, no per-layer prompts
+#   - use --interactive (-i) to be asked before each layer
+#
 # Safe by design:
-#   - every layer is optional (you're asked before each one)
 #   - never overwrites an existing file without backing it up first
 #   - merges hook config into ~/.claude/settings.json additively (jq),
 #     with a timestamped backup and a printed diff
 #
-# Run it from the repo root:   bash setup.sh
+# Run it from the repo root:   bash setup.sh   (or: bash setup.sh --interactive)
 set -euo pipefail
 
 KIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/kit"
@@ -20,27 +24,56 @@ info()  { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 warn()  { printf '  \033[33m!\033[0m %s\n' "$*"; }
 skip()  { printf '  \033[2m- %s\033[0m\n' "$*"; }
 
-ask_yn() {  # ask_yn "question" -> 0 yes / 1 no
+ask_yn() {  # ask_yn "question" -> 0 yes / 1 no  (auto-yes when AUTO=1)
+  if [[ "${AUTO:-1}" == "1" ]]; then
+    printf '%s (auto: yes)\n' "$1"
+    return 0
+  fi
   local reply
   read -r -p "$1 [y/N] " reply
   [[ "$reply" =~ ^[Yy] ]]
 }
 
-# Copy $1 -> $2. If the destination exists and differs, back it up first.
-install_file() {
-  local src="$1" dst="$2"
-  mkdir -p "$(dirname "$dst")"
-  if [[ -e "$dst" ]]; then
-    if cmp -s "$src" "$dst"; then
-      skip "$(basename "$dst") already installed (identical)"
+install_file() {  # install_file <source> <dest> — back up on change, idempotent
+  local src="$1" dest="$2"
+  mkdir -p "$(dirname "$dest")"
+  if [[ -f "$dest" ]]; then
+    if cmp -s "$src" "$dest"; then
+      skip "$(basename "$dest") already up to date"
       return 0
     fi
-    cp "$dst" "${dst}.bak-${TS}"
-    warn "$(basename "$dst") existed and differed — backed up to $(basename "$dst").bak-${TS}"
+    cp "$dest" "${dest}.bak-${TS}"
+    info "backed up $(basename "$dest") -> $(basename "$dest").bak-${TS}"
   fi
-  cp "$src" "$dst"
-  info "installed $dst"
+  cp "$src" "$dest"
+  info "installed $(basename "$dest")"
 }
+
+# ----------------------------------------------------- arg + mode parsing
+AUTO=1
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --interactive|-i) AUTO=0 ;;
+    --help|-h)
+      cat <<'USAGE'
+Usage: bash setup.sh [--interactive] [--help]
+  --interactive, -i     Prompt before each layer (default: fully automatic)
+  --help, -h            Show this message and exit
+
+Environment variables:
+  MAGIC_KEY             API key for the 'magic' MCP (interactive mode only)
+  SETUP_CLONE_VAULT=1   In auto mode, clone the full vault starter (else: bare vault)
+  SETUP_PULL_GEMMA=1    In auto mode, pull gemma4:e4b model (else: skip)
+USAGE
+      exit 0
+      ;;
+    *)
+      warn "Unknown flag: $1"
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 [[ -d "$KIT_DIR" ]] || { echo "setup.sh must be run from the repo root (kit/ not found)"; exit 1; }
 
@@ -49,10 +82,41 @@ echo
 
 # ---------------------------------------------------------------- preflight
 bold "Preflight — checking prerequisites"
-OS="linux"
-[[ "$(uname -s)" == "Darwin" ]] && OS="mac"
-grep -qi microsoft /proc/version 2>/dev/null && OS="wsl"
-info "platform: $OS"
+
+# OS detection -> OS in {mac, wsl, linux, unsupported}, PKG in {brew, apt, none}
+case "$(uname -s)" in
+  Darwin)
+    OS="mac"
+    PKG="brew"
+    ;;
+  Linux)
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+      OS="wsl"
+    else
+      OS="linux"
+    fi
+    if command -v apt-get >/dev/null 2>&1; then
+      PKG="apt"
+    else
+      PKG="none"
+    fi
+    ;;
+  MINGW*|MSYS*|CYGWIN*)
+    OS="unsupported"
+    PKG="none"
+    ;;
+  *)
+    OS="unsupported"
+    PKG="none"
+    ;;
+esac
+
+if [[ "$OS" == "unsupported" ]]; then
+  echo "This kit must be run inside WSL 2. See docs/03-install-windows.md for setup instructions." >&2
+  exit 1
+fi
+
+info "platform: $OS (package manager: $PKG)"
 
 MISSING=()
 for cmd in git jq curl python3 node npm; do
@@ -63,23 +127,127 @@ for cmd in git jq curl python3 node npm; do
     warn "$cmd is missing"
   fi
 done
-if [[ ${#MISSING[@]} -gt 0 ]]; then
-  if [[ "$OS" == "mac" ]]; then
-    echo "  Install the missing tools with Homebrew (see docs/02-install-mac.md):"
-    echo "      brew install ${MISSING[*]}"
-  else
-    echo "  Install the missing tools (see docs/03-install-windows.md):"
-    echo "      sudo apt update && sudo apt install -y ${MISSING[*]}"
-    echo "  (node/npm are best installed via nvm — see the doc.)"
+
+if [[ ${#MISSING[@]} -eq 0 ]]; then
+  info "all required tools are present"
+else
+  if [[ "$AUTO" == "0" ]]; then
+    if ! ask_yn "Some required tools are missing (${MISSING[*]}). Attempt to install them?"; then
+      echo "  Re-run setup.sh after installing them manually." >&2
+      exit 1
+    fi
   fi
-  echo "  Re-run setup.sh afterwards."
-  exit 1
+
+  if [[ "$OS" == "mac" ]]; then
+    if [[ "$PKG" == "brew" ]]; then
+      if ! command -v brew >/dev/null 2>&1; then
+        info "installing Homebrew (non-interactive)…"
+        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+          || { warn "Homebrew installation failed"; exit 1; }
+        if [[ -x /opt/homebrew/bin/brew ]]; then
+          eval "$(/opt/homebrew/bin/brew shellenv)"
+        elif [[ -x /usr/local/bin/brew ]]; then
+          eval "$(/usr/local/bin/brew shellenv)"
+        fi
+      fi
+      # Build brew install list (node installs npm, so drop npm if listed)
+      local_brew_list=()
+      for m in "${MISSING[@]}"; do
+        [[ "$m" == "npm" ]] && continue  # npm comes with node
+        local_brew_list+=("$m")
+      done
+      if [[ ${#local_brew_list[@]} -gt 0 ]]; then
+        info "brew install ${local_brew_list[*]}"
+        brew install "${local_brew_list[@]}" || warn "brew install had issues"
+      fi
+    else
+      PKG="none"
+    fi
+  fi
+
+  if [[ "$OS" == "wsl" || "$OS" == "linux" ]]; then
+    if [[ "$PKG" == "apt" ]]; then
+      echo "  (sudo may prompt for your password once)"
+      sudo apt-get update >/dev/null 2>&1 || warn "apt-get update had issues"
+      apt_missing=()
+      for m in "${MISSING[@]}"; do
+        case "$m" in
+          node|npm) ;;  # handled via nvm below
+          *) apt_missing+=("$m") ;;
+        esac
+      done
+      if [[ ${#apt_missing[@]} -gt 0 ]]; then
+        info "sudo apt-get install -y ${apt_missing[*]}"
+        sudo apt-get install -y "${apt_missing[@]}" || warn "apt-get install had issues"
+      fi
+      # Install node/npm via nvm if missing (apt's node is stale)
+      need_nvm=0
+      for m in "${MISSING[@]}"; do
+        [[ "$m" == "node" || "$m" == "npm" ]] && need_nvm=1
+      done
+      if [[ "$need_nvm" == 1 ]]; then
+        info "installing nvm (Node Version Manager)…"
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash || warn "nvm install had issues"
+        export NVM_DIR="$HOME/.nvm"
+        # shellcheck disable=SC1091
+        [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+        nvm install --lts || warn "nvm install --lts had issues"
+      fi
+    else
+      PKG="none"
+    fi
+  fi
+
+  if [[ "$PKG" == "none" ]]; then
+    warn "no supported package manager found — manual installation required"
+    if [[ "$OS" == "mac" ]]; then
+      echo "  See docs/02-install-mac.md for instructions." >&2
+    else
+      echo "  See docs/03-install-windows.md for instructions." >&2
+    fi
+    echo "  Re-run setup.sh afterwards." >&2
+    exit 1
+  fi
+
+  # Re-check all required commands after bootstrap
+  STILL_MISSING=()
+  for cmd in git jq curl python3 node npm; do
+    command -v "$cmd" >/dev/null 2>&1 || STILL_MISSING+=("$cmd")
+  done
+  if [[ ${#STILL_MISSING[@]} -gt 0 ]]; then
+    warn "these tools are still missing after install: ${STILL_MISSING[*]}"
+    if [[ "$OS" == "mac" ]]; then
+      echo "  See docs/02-install-mac.md for manual instructions." >&2
+    else
+      echo "  See docs/03-install-windows.md for manual instructions." >&2
+    fi
+    exit 1
+  fi
 fi
 
+# --------------------------------------------------------- PATH auto-wiring
 case ":$PATH:" in
-  *":$BIN_DIR:"*) info "$BIN_DIR is on PATH" ;;
-  *) warn "$BIN_DIR is not on your PATH — add this to your shell profile:
-      export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+  *":$BIN_DIR:"*)
+    info "$BIN_DIR is on PATH"
+    profile=""
+    ;;
+  *)
+    if [[ "${SHELL:-}" == *zsh ]]; then
+      profile="$HOME/.zshrc"
+    else
+      profile="$HOME/.bashrc"
+    fi
+    touch "$profile"
+    if ! grep -qF 'export PATH="$HOME/.local/bin:$PATH"' "$profile"; then
+      [[ -s "$profile" ]] && cp "$profile" "${profile}.bak-${TS}"  # back up only when we actually modify
+      printf '\n# added by claude-code-setup-kit\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$profile"
+      info "PATH wired in $profile — open a new terminal or run: source $profile"
+    else
+      info "PATH export already present in $profile"
+    fi
+    # Make ~/.local/bin usable for the rest of this run
+    export PATH="$HOME/.local/bin:$PATH"
+    ;;
 esac
 echo
 
@@ -116,7 +284,11 @@ if command -v claude >/dev/null 2>&1 && ask_yn "Add the recommended MCP servers?
   if claude mcp get magic >/dev/null 2>&1; then
     skip "mcp 'magic' already configured"
   else
-    read -r -p "  21st.dev API key for the 'magic' component builder (Enter to skip): " MAGIC_KEY
+    if [[ "$AUTO" == "0" ]]; then
+      read -r -p "  21st.dev API key for the 'magic' component builder (Enter to skip): " MAGIC_KEY
+    else
+      MAGIC_KEY="${MAGIC_KEY:-}"
+    fi
     if [[ -n "$MAGIC_KEY" ]]; then
       claude mcp add --scope user magic --env API_KEY="$MAGIC_KEY" -- npx -y @21st-dev/magic@latest \
         && info "added mcp 'magic'"
@@ -124,8 +296,7 @@ if command -v claude >/dev/null 2>&1 && ask_yn "Add the recommended MCP servers?
       skip "skipped 'magic' (add later — see docs/07-mcp-stack.md)"
     fi
   fi
-  echo "  Plugins (vercel, supabase, ui-ux-pro-max, figma) are installed INSIDE Claude Code"
-  echo "  with /plugin — see docs/06-skills-plugins.md."
+  echo "  Plugins are auto-installed in Layer 5 (see docs/06-skills-plugins.md)."
 else
   skip "skipped MCP stack (docs/07-mcp-stack.md has the manual commands)"
 fi
@@ -136,18 +307,27 @@ bold "Layer 3 — Second brain (Obsidian-compatible knowledge vault)"
 if ask_yn "Set up the knowledge vault at ~/claude-obsidian?"; then
   if [[ -d "$HOME/claude-obsidian" ]]; then
     skip "~/claude-obsidian already exists — leaving it untouched"
-  elif ask_yn "  Clone the full claude-obsidian starter (github.com/AgriciDaniel/claude-obsidian)? 'n' creates a bare vault"; then
-    git clone https://github.com/AgriciDaniel/claude-obsidian "$HOME/claude-obsidian"
-    info "cloned starter vault"
   else
-    mkdir -p "$HOME/claude-obsidian/wiki"
-    printf '# Wiki index\n\nCatalog of all pages in this vault. One line per page.\n' \
-      > "$HOME/claude-obsidian/wiki/index.md"
-    info "created bare vault at ~/claude-obsidian/wiki"
+    clone_vault=0
+    if [[ "$AUTO" == "0" ]]; then
+      if ask_yn "  Clone the full claude-obsidian starter (github.com/AgriciDaniel/claude-obsidian)? 'n' creates a bare vault"; then
+        clone_vault=1
+      fi
+    fi
+    [[ "${SETUP_CLONE_VAULT:-}" == "1" ]] && clone_vault=1
+    if [[ "$clone_vault" == 1 ]]; then
+      git clone https://github.com/AgriciDaniel/claude-obsidian "$HOME/claude-obsidian"
+      info "cloned starter vault"
+    else
+      mkdir -p "$HOME/claude-obsidian/wiki"
+      printf '# Wiki index\n\nCatalog of all pages in this vault. One line per page.\n' \
+        > "$HOME/claude-obsidian/wiki/index.md"
+      info "created bare vault at ~/claude-obsidian/wiki"
+    fi
   fi
   [[ -f "$HOME/claude-obsidian/wiki/hot.md" ]] \
     && skip "wiki/hot.md already exists" \
-    || { cp "$KIT_DIR/templates/hot-starter.md" "$HOME/claude-obsidian/wiki/hot.md"; info "installed wiki/hot.md starter"; }
+    || install_file "$KIT_DIR/templates/hot-starter.md" "$HOME/claude-obsidian/wiki/hot.md"
   install_file "$KIT_DIR/hooks/session-start-hotcache.sh" "$CLAUDE_DIR/hooks/session-start-hotcache.sh"
   chmod +x "$CLAUDE_DIR/hooks/session-start-hotcache.sh"
   INSTALL_SESSION_HOOK=1
@@ -163,14 +343,26 @@ INSTALL_STOP_HOOKS=0
 if ask_yn "Install the delegation harness?"; then
   if ! command -v ollama >/dev/null 2>&1; then
     if [[ "$OS" == "mac" ]]; then
-      if command -v brew >/dev/null 2>&1 && ask_yn "  Install Ollama via Homebrew?"; then
-        brew install --cask ollama
+      if command -v brew >/dev/null 2>&1; then
+        if [[ "$AUTO" == "0" ]]; then
+          if ask_yn "  Install Ollama via Homebrew?"; then
+            brew install --cask ollama || warn "could not install Ollama via brew"
+          fi
+        else
+          info "installing Ollama via Homebrew…"
+          brew install --cask ollama || warn "could not install Ollama via brew"
+        fi
       else
         warn "install Ollama from https://ollama.com/download then re-run this layer"
       fi
     else
-      if ask_yn "  Install Ollama via the official install script?"; then
-        curl -fsSL https://ollama.com/install.sh | sh
+      if [[ "$AUTO" == "0" ]]; then
+        if ask_yn "  Install Ollama via the official install script?"; then
+          curl -fsSL https://ollama.com/install.sh | sh || warn "Ollama install script failed"
+        fi
+      else
+        info "installing Ollama via official install script…"
+        curl -fsSL https://ollama.com/install.sh | sh || warn "Ollama install script failed"
       fi
     fi
   else
@@ -178,8 +370,18 @@ if ask_yn "Install the delegation harness?"; then
   fi
 
   if command -v ollama >/dev/null 2>&1; then
-    if ask_yn "  Pull the free local model gemma4:e4b (~10 GB download)?"; then
-      ollama pull gemma4:e4b
+    pull_gemma=0
+    if [[ "$AUTO" == "0" ]]; then
+      if ask_yn "  Pull the free local model gemma4:e4b (~10 GB download)?"; then
+        pull_gemma=1
+      fi
+    fi
+    [[ "${SETUP_PULL_GEMMA:-}" == "1" ]] && pull_gemma=1
+    if [[ "$pull_gemma" == 1 ]]; then
+      ollama pull gemma4:e4b || warn "could not pull gemma4:e4b"
+    else
+      skip "skipped gemma4:e4b pull"
+      echo "  To pull gemma4:e4b later: ollama pull gemma4:e4b"
     fi
     echo "  For the GLM/Kimi cloud models, sign in once:  ollama signin"
     echo "  (they run as glm-5.2:cloud and kimi-k2.7-code:cloud — no local download)"
@@ -204,6 +406,43 @@ else
 fi
 echo
 
+# ----------------------------------------------------- layer 5: claude plugins
+bold "Layer 5 — Claude Code plugins"
+if ! command -v claude >/dev/null 2>&1; then
+  skip "Claude Code not installed — skipping plugins"
+else
+  add_marketplace() {  # non-fatal: never aborts the installer
+    local src="$1"
+    if claude plugin marketplace list 2>/dev/null | grep -qiF "$src"; then
+      skip "marketplace $src already added"
+    else
+      claude plugin marketplace add "$src" >/dev/null 2>&1 && info "added marketplace $src" || warn "could not add marketplace $src (skipping)"
+    fi
+  }
+
+  install_plugin() {  # non-fatal: never aborts the installer
+    local p="$1"
+    if claude plugin list 2>/dev/null | grep -qiF "${p%@*}"; then
+      skip "plugin ${p%@*} already installed"
+    else
+      claude plugin install "$p" >/dev/null 2>&1 && info "installed plugin $p" || warn "could not install plugin $p (skipping)"
+    fi
+  }
+
+  if ask_yn "Add Claude Code plugins?"; then
+    # exact marketplace slugs may drift — failures are non-fatal by design
+    add_marketplace "anthropics/skills"
+    add_marketplace "nextlevelbuilder/ui-ux-pro-max-skill"
+    install_plugin "ui-ux-pro-max"
+    install_plugin "vercel"
+    install_plugin "supabase"
+    install_plugin "figma"
+  else
+    skip "skipped plugins layer"
+  fi
+fi
+echo
+
 # ------------------------------------------------- CLAUDE.md + memory starter
 bold "Templates — global CLAUDE.md and memory index"
 if [[ -f "$CLAUDE_DIR/CLAUDE.md" ]]; then
@@ -220,7 +459,7 @@ SETTINGS="$CLAUDE_DIR/settings.json"
 mkdir -p "$CLAUDE_DIR"
 [[ -f "$SETTINGS" ]] || echo '{}' > "$SETTINGS"
 
-if [[ "$INSTALL_SESSION_HOOK" == 1 || "$INSTALL_STOP_HOOKS" == 1 ]]; then
+if [[ "${INSTALL_SESSION_HOOK:-0}" == 1 || "${INSTALL_STOP_HOOKS:-0}" == 1 ]]; then
   cp "$SETTINGS" "${SETTINGS}.bak-${TS}"
   info "backed up settings.json -> settings.json.bak-${TS}"
 
@@ -259,11 +498,16 @@ echo
 
 # -------------------------------------------------------------------- report
 bold "Done. Next steps"
-cat <<'EOF'
-  1. Open a NEW terminal (so PATH changes apply) and run:  claude
-  2. If you installed Layer 4: start Ollama, run 'ollama signin', then test:
-       ask-gemma "say hello"
-       ask-glm  "say hello"
-  3. Read docs/00-overview.md for how the pieces fit together, and
-     docs/04-first-session.md for your first steps inside Claude Code.
+cat <<EOF
+  1. Open a new terminal: source ${profile:-~/.bashrc} (or restart your terminal)
+  2. Run: claude
+     (log in via your browser and select a workspace)
+  3. If you installed Layer 4 (delegation harness):
+     - Start Ollama app (or 'ollama serve' in another terminal)
+     - Run: ollama signin
+     - Test: ask-gemma "say hello"  and  ask-glm "say hello"
+  4. Optional: pull the Gemma model if you skipped it earlier:
+     ollama pull gemma4:e4b
+  5. Edit any [BRACKETED PLACEHOLDERS] in ~/.claude/CLAUDE.md
+  6. Read docs/00-overview.md for how the pieces fit together.
 EOF

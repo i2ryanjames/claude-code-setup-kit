@@ -8,6 +8,18 @@ In this guide you will turn your Windows computer into a friendly place for Clau
 
 Claude Code is a terminal application that runs best in a real Linux environment. On Windows, the cleanest way to get that environment is WSL2, which installs a genuine Ubuntu Linux system that runs side by side with Windows. Once you are inside Ubuntu, the commands look and behave the same as the "Mac" commands used throughout the rest of this kit.
 
+## Automatic prerequisite bootstrap
+
+Inside WSL, the `setup.sh` installer can automatically detect and install the
+base tools (git, jq, curl, python3 via apt) and Node.js via nvm, so the manual
+steps below are now a **fallback reference** if you prefer to install by hand or
+if the auto-bootstrap doesn't work. Once you're at an Ubuntu prompt (after
+Step 1), you can run `bash setup.sh` (or the README one-liner) directly.
+
+**Note:** Running the kit outside WSL (native Windows, PowerShell, or Git Bash)
+is not supported. The installer detects this and stops with a message pointing
+back here to set up WSL first.
+
 ## Step 1: Install WSL2 from an admin PowerShell
 
 Open PowerShell as Administrator. The easiest way is to press the Start menu, type "PowerShell", right-click it, and choose **Run as administrator**. When the window opens, run the command below. It installs WSL2 and the default Ubuntu distribution in one shot.
