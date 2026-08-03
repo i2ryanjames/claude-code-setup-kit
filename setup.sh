@@ -187,7 +187,7 @@ else
       done
       if [[ "$need_nvm" == 1 ]]; then
         info "installing nvm (Node Version Manager)…"
-        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash || warn "nvm install had issues"
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.6/install.sh | bash || warn "nvm install had issues"
         export NVM_DIR="$HOME/.nvm"
         # shellcheck disable=SC1091
         [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
@@ -273,7 +273,7 @@ if command -v claude >/dev/null 2>&1 && ask_yn "Add the recommended MCP servers?
     if claude mcp get "$name" >/dev/null 2>&1; then
       skip "mcp '$name' already configured"
     else
-      claude mcp add --scope user "$name" -- "$@" && info "added mcp '$name'"
+      claude mcp add --transport stdio --scope user "$name" -- "$@" && info "added mcp '$name'"
     fi
   }
   add_mcp shadcn npx -y shadcn@latest mcp
@@ -290,7 +290,7 @@ if command -v claude >/dev/null 2>&1 && ask_yn "Add the recommended MCP servers?
       MAGIC_KEY="${MAGIC_KEY:-}"
     fi
     if [[ -n "$MAGIC_KEY" ]]; then
-      claude mcp add --scope user magic --env API_KEY="$MAGIC_KEY" -- npx -y @21st-dev/magic@latest \
+      claude mcp add --transport stdio --scope user magic --env API_KEY="$MAGIC_KEY" -- npx -y @21st-dev/magic@latest \
         && info "added mcp 'magic'"
     else
       skip "skipped 'magic' (add later — see docs/07-mcp-stack.md)"
@@ -346,11 +346,11 @@ if ask_yn "Install the delegation harness?"; then
       if command -v brew >/dev/null 2>&1; then
         if [[ "$AUTO" == "0" ]]; then
           if ask_yn "  Install Ollama via Homebrew?"; then
-            brew install --cask ollama || warn "could not install Ollama via brew"
+            brew install --cask ollama-app || warn "could not install Ollama via brew"
           fi
         else
           info "installing Ollama via Homebrew…"
-          brew install --cask ollama || warn "could not install Ollama via brew"
+          brew install --cask ollama-app || warn "could not install Ollama via brew"
         fi
       else
         warn "install Ollama from https://ollama.com/download then re-run this layer"

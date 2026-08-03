@@ -21,8 +21,10 @@ A Claude subscription comes with usage limits. Every routine question, rough dra
 First, install Ollama. On macOS with Homebrew you can run:
 
 ```bash
-brew install --cask ollama
+brew install --cask ollama-app
 ```
+
+(The cask was renamed from `ollama` to `ollama-app` — if you have an old install command lying around, update it.)
 
 On Linux, the Ollama install script is the easiest path:
 

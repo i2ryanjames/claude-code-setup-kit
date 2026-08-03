@@ -77,7 +77,7 @@ If one server is stuck, remove it and add it back fresh:
 
 ```bash
 claude mcp remove my-server
-claude mcp add my-server npx -y my-mcp-server
+claude mcp add --transport stdio my-server -- npx -y my-mcp-server
 ```
 
 ## Permission prompts are too frequent
