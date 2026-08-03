@@ -22,13 +22,13 @@ The commands below all use user scope, since these tools are useful across proje
 This command adds a server named `shadcn` that lets Claude browse and use shadcn components. It runs the latest shadcn MCP server through `npx`, which downloads and runs the package on demand.
 
 ```bash
-claude mcp add --scope user shadcn -- npx -y shadcn@latest mcp
+claude mcp add --transport stdio --scope user shadcn -- npx -y shadcn@latest mcp
 ```
 
 This command adds a server named `magic-ui` for Magic UI animated components. It works the same way as the shadcn command but points at the Magic UI package.
 
 ```bash
-claude mcp add --scope user magic-ui -- npx -y @magicuidesign/mcp
+claude mcp add --transport stdio --scope user magic-ui -- npx -y @magicuidesign/mcp
 ```
 
 ## Adding the 21st.dev component builder (optional)
@@ -36,27 +36,29 @@ claude mcp add --scope user magic-ui -- npx -y @magicuidesign/mcp
 This command adds a server named `magic` that uses the 21st.dev AI component builder. It requires an API key from 21st.dev, which you must place where `<your-21st-dev-key>` is shown. If you do not have a key, skip this one — it is optional.
 
 ```bash
-claude mcp add --scope user magic -- env API_KEY=<your-21st-dev-key> npx -y @21st-dev/magic@latest
+claude mcp add --transport stdio --scope user magic -- env API_KEY=<your-21st-dev-key> npx -y @21st-dev/magic@latest
 ```
+
+Note: the `@21st-dev/magic` package is now a compatibility shim that proxies to 21st.dev's newer unified MCP server, so the command above still works — but any API key from the old Magic console is dead. Generate a fresh key at [21st.dev/mcp](https://21st.dev/mcp) before running this.
 
 ## Adding live docs and browser automation
 
 This command adds a server named `context7` that fetches live, up-to-date documentation for libraries. This helps Claude avoid relying on stale knowledge about packages that change often.
 
 ```bash
-claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp
+claude mcp add --transport stdio --scope user context7 -- npx -y @upstash/context7-mcp
 ```
 
 This command adds a server named `playwright` that lets Claude automate a browser using Playwright. It is useful for tasks like clicking through a page or taking screenshots during testing.
 
 ```bash
-claude mcp add --scope user playwright -- npx -y @playwright/mcp@latest
+claude mcp add --transport stdio --scope user playwright -- npx -y @playwright/mcp@latest
 ```
 
 For Chrome DevTools, you have two options. You can install the official plugin from the `ChromeDevTools/chrome-devtools-mcp` repository (using the plugin flow from the previous page), or you can add it directly as an MCP server with this command:
 
 ```bash
-claude mcp add --scope user chrome-devtools -- npx -y chrome-devtools-mcp@latest
+claude mcp add --transport stdio --scope user chrome-devtools -- npx -y chrome-devtools-mcp@latest
 ```
 
 ## Verifying your MCP servers
