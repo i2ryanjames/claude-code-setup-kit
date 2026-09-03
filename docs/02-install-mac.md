@@ -38,13 +38,19 @@ This may take a few minutes the first time. When it returns to the prompt withou
 
 ## Install Claude Code
 
-Claude Code is the lead engineer of this whole setup. It is distributed as an npm package, and since you installed `node` above, you already have the `npm` command. Install Claude Code globally so it is available in any folder:
+Claude Code is the lead engineer of this whole setup. Anthropic's currently recommended way to install it is a native installer that doesn't depend on Node at all:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+Since you already installed `node` above, the classic route also still works, and is what the rest of this kit assumes if you ever need to reinstall or upgrade by hand:
 
 ```bash
 npm install -g @anthropic-ai/claude-code
 ```
 
-The `-g` flag means "install for every project, not just this one." When the command finishes, the `claude` program will be on your machine.
+The `-g` flag means "install for every project, not just this one." Either command leaves you with a `claude` program on your machine — pick whichever one finishes without errors.
 
 ## Log in for the first time
 
