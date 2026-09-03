@@ -33,7 +33,7 @@ claude mcp add --scope user magic-ui -- npx -y @magicuidesign/mcp
 
 ## Adding the 21st.dev component builder (optional)
 
-This command adds a server named `magic` that uses the 21st.dev AI component builder. It requires an API key from 21st.dev, which you must place where `<your-21st-dev-key>` is shown. If you do not have a key, skip this one — it is optional.
+This command adds a server named `magic` that uses the 21st.dev AI component builder (now branded "21st MCP", though the package keeps its original name). It requires an API key from 21st.dev, which you must place where `<your-21st-dev-key>` is shown — get a fresh one from 21st.dev/mcp, since old Magic-era keys have been reset. If you do not have a key, skip this one — it is optional.
 
 ```bash
 claude mcp add --scope user magic -- env API_KEY=<your-21st-dev-key> npx -y @21st-dev/magic@latest

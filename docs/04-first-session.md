@@ -24,15 +24,15 @@ This launches an interactive session. Claude reads the files around it, waits fo
 
 ## Step 2: Understand the permission prompt system
 
-Claude never silently runs dangerous things. Before it executes a shell command, edits a file, or takes any action with side effects, it shows you a prompt describing exactly what it wants to do and asks for your approval. You always have the chance to say yes, no, or ask for changes first.
+Claude never silently runs dangerous things. Before it executes a shell command, edits a file, or takes any action with side effects, it either shows you a prompt describing exactly what it wants to do and asks for your approval, or — in the newer auto mode described below — has a fast built-in classifier review the action and only stop you for the riskier ones. Either way, you always have the chance to say yes, no, or ask for changes first on anything that reaches you.
 
-There are three interaction modes you can switch between:
+There are several interaction modes you can switch between. The three you will use most often:
 
-- **Default ask mode** — Claude proposes every action and waits for you to approve. This is the safest mode and is where you will start.
-- **Auto-accept edits mode** — Claude may edit files without asking, but still prompts before running shell commands. Great once you trust a task.
+- **Manual mode** — Claude proposes every action and waits for you to approve. The safest mode, and a good one to start in while you're learning what Claude does.
+- **Auto mode** — a second, faster model (a "classifier") reviews Claude's actions and waves through the low-risk ones without asking you, while still stopping on anything riskier. On a Pro, Max, or Team plan, this is the mode a new session actually starts in, not manual mode — so don't be surprised if Claude runs a few things without prompting you right away.
 - **Plan mode** — Claude only reads and plans; it will not edit or run anything until you tell it to proceed. Useful for exploring an unfamiliar codebase.
 
-You cycle between these modes by pressing **Shift+Tab** at the prompt. The current mode is always shown, so you always know what Claude is allowed to do.
+You cycle between modes by pressing **Shift+Tab** at the prompt. The current mode is always shown, so you always know what Claude is allowed to do. If you want to see every action before it runs, switch to manual mode.
 
 ## Step 3: Learn the core slash commands
 

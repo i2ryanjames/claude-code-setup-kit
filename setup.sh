@@ -187,7 +187,7 @@ else
       done
       if [[ "$need_nvm" == 1 ]]; then
         info "installing nvm (Node Version Manager)…"
-        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash || warn "nvm install had issues"
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.7/install.sh | bash || warn "nvm install had issues"
         export NVM_DIR="$HOME/.nvm"
         # shellcheck disable=SC1091
         [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
@@ -346,11 +346,11 @@ if ask_yn "Install the delegation harness?"; then
       if command -v brew >/dev/null 2>&1; then
         if [[ "$AUTO" == "0" ]]; then
           if ask_yn "  Install Ollama via Homebrew?"; then
-            brew install --cask ollama || warn "could not install Ollama via brew"
+            brew install --cask ollama-app || warn "could not install Ollama via brew"
           fi
         else
           info "installing Ollama via Homebrew…"
-          brew install --cask ollama || warn "could not install Ollama via brew"
+          brew install --cask ollama-app || warn "could not install Ollama via brew"
         fi
       else
         warn "install Ollama from https://ollama.com/download then re-run this layer"
