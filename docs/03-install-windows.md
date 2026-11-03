@@ -52,7 +52,7 @@ Here is what each piece does:
 Claude Code is built on Node.js, and the safest way to install Node on Ubuntu is through a version manager called **nvm**. The command below downloads and runs the official nvm install script.
 
 ```bash
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.8/install.sh | bash
 ```
 
 This downloads the nvm installer from its official GitHub repository and runs it in your shell. It does not need `sudo` because it installs only into your home folder.
@@ -74,6 +74,8 @@ npm install -g @anthropic-ai/claude-code
 ```
 
 The `-g` flag means "install globally," so Claude Code is available everywhere in your Ubuntu system rather than only in one project.
+
+Anthropic also now offers a native installer that auto-updates itself in the background: `curl -fsSL https://claude.ai/install.sh | bash`. Either method gives you the same `claude` command — this kit sticks with the npm method above since you already have `node`/`npm` installed for the MCP tooling later in this kit.
 
 ## Step 6: Log in
 

@@ -18,7 +18,10 @@ As of the latest version, `setup.sh` (Layer 5 of the installer) automatically
 installs a recommended set of plugins for you using the `claude plugin` CLI. This
 includes **ui-ux-pro-max**, **vercel**, **supabase**, **figma**, and the
 **anthropics/skills** marketplace by default — so you no longer need to install
-these by hand after running the installer.
+these by hand after running the installer. (Vercel, Supabase, and Figma ship from
+Anthropic's own official marketplace, `anthropics/claude-plugins-official`, which
+the installer registers explicitly so it works on a fresh machine that has never
+opened an interactive Claude Code session before.)
 
 The walkthrough below is still useful as a **manual reference** if you want to
 add other plugins later or if the auto-installation doesn't complete.
