@@ -46,6 +46,8 @@ npm install -g @anthropic-ai/claude-code
 
 The `-g` flag means "install for every project, not just this one." When the command finishes, the `claude` program will be on your machine.
 
+Anthropic also now offers a native installer that auto-updates itself in the background: `curl -fsSL https://claude.ai/install.sh | bash`. Either method gives you the same `claude` command — this kit sticks with the npm method above since you already have `node`/`npm` installed for the MCP tooling later in this kit.
+
 ## Log in for the first time
 
 Claude Code needs to connect to your Anthropic account. Pick any folder you can write to, move into it, and launch Claude Code:

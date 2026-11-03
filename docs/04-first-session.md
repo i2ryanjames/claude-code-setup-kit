@@ -26,13 +26,13 @@ This launches an interactive session. Claude reads the files around it, waits fo
 
 Claude never silently runs dangerous things. Before it executes a shell command, edits a file, or takes any action with side effects, it shows you a prompt describing exactly what it wants to do and asks for your approval. You always have the chance to say yes, no, or ask for changes first.
 
-There are three interaction modes you can switch between:
+There are three interaction modes you can cycle through by pressing **Shift+Tab** at the prompt:
 
-- **Default ask mode** — Claude proposes every action and waits for you to approve. This is the safest mode and is where you will start.
-- **Auto-accept edits mode** — Claude may edit files without asking, but still prompts before running shell commands. Great once you trust a task.
+- **Default ask mode** (the current UI labels this one "Manual") — Claude proposes every action and waits for you to approve. This is the safest mode and is where you will start.
+- **Auto-accept edits mode** — Claude may edit files and run common filesystem commands (like `mkdir` or `mv`) without asking, but still prompts before other shell commands. Great once you trust a task.
 - **Plan mode** — Claude only reads and plans; it will not edit or run anything until you tell it to proceed. Useful for exploring an unfamiliar codebase.
 
-You cycle between these modes by pressing **Shift+Tab** at the prompt. The current mode is always shown, so you always know what Claude is allowed to do.
+The current mode is always shown, so you always know what Claude is allowed to do. (A few more advanced modes, including a "bypass permissions" mode meant for unattended/CI-style runs, exist outside this default Shift+Tab cycle — not something you need as a beginner, but good to know the cycle above isn't the full list.)
 
 ## Step 3: Learn the core slash commands
 

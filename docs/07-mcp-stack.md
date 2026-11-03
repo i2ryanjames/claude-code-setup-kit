@@ -25,6 +25,8 @@ This command adds a server named `shadcn` that lets Claude browse and use shadcn
 claude mcp add --scope user shadcn -- npx -y shadcn@latest mcp
 ```
 
+(shadcn's own docs now lead with a shortcut that does the same thing — `npx shadcn@latest mcp init --client claude` — but the manual command above still works and is easier to script.)
+
 This command adds a server named `magic-ui` for Magic UI animated components. It works the same way as the shadcn command but points at the Magic UI package.
 
 ```bash
@@ -36,7 +38,7 @@ claude mcp add --scope user magic-ui -- npx -y @magicuidesign/mcp
 This command adds a server named `magic` that uses the 21st.dev AI component builder. It requires an API key from 21st.dev, which you must place where `<your-21st-dev-key>` is shown. If you do not have a key, skip this one — it is optional.
 
 ```bash
-claude mcp add --scope user magic -- env API_KEY=<your-21st-dev-key> npx -y @21st-dev/magic@latest
+claude mcp add --scope user magic --env API_KEY_21ST=<your-21st-dev-key> -- npx -y @21st-dev/magic@latest
 ```
 
 ## Adding live docs and browser automation
@@ -45,6 +47,12 @@ This command adds a server named `context7` that fetches live, up-to-date docume
 
 ```bash
 claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp
+```
+
+If you picked up a context7 API key (see docs/01-accounts.md), pass it along for higher rate limits instead:
+
+```bash
+claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp --api-key <your-context7-key>
 ```
 
 This command adds a server named `playwright` that lets Claude automate a browser using Playwright. It is useful for tasks like clicking through a page or taking screenshots during testing.
